@@ -1,6 +1,6 @@
 {
-    "name": "Bluetooth Power",
-    "description": "A simple bluetooth power monitor.",
+    "name": "Bluetooth Battery Status",
+    "description": "Lists connected Bluetooth devices and their battery levels.",
     "author": "Dion Munk",
     "email": "dion@dionmunk.com"
-  }
+}
