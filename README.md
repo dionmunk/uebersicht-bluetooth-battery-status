@@ -6,7 +6,7 @@ A Bluetooth battery status widget for [Übersicht](http://tracesof.net/uebersich
 
 ## Screenshot
 
-![Screenshot](screenshots/screenshot.png)
+![Screenshot](screenshot.png)
 
 ## Installation
 
