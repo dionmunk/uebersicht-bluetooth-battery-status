@@ -8,7 +8,7 @@ style: """
   left 340px
 
   color var(--text, #fff)
-  text-shadow: 0 1px 1px rgba(20, 1, 1, 0.10)   // inherits to all text elements
+  text-shadow: 0 1px 1px rgba(20, 1, 1, 0.2)   // inherits to all text elements
   font-family -apple-system, BlinkMacSystemFont, system-ui, sans-serif
   display: flex
   gap: 10px
