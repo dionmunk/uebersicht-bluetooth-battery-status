@@ -1,5 +1,8 @@
 command: "(ioreg -r -k BatteryPercent | grep -E '\"(Product|BatteryPercent)\"' ; echo '---SEP---' ; system_profiler -json SPBluetoothDataType 2>/dev/null)"
 
+# Enable or disable this widget.
+widgetEnabled: true   # true | false
+
 refreshFrequency: '30s'
 
 style: """
@@ -142,6 +145,11 @@ parseSystemProfiler: (jsonText) ->
   devices
 
 update: (output, domEl) ->
+  # Hide entirely when disabled.
+  if not @widgetEnabled
+    $(domEl).css('display', 'none')
+    return
+  $(domEl).css('display', '')
   [ioregText, jsonText] = output.split('---SEP---')
   ioregDevices = @parseIoreg(ioregText or '')
   spDevices    = @parseSystemProfiler((jsonText or '').trim())
