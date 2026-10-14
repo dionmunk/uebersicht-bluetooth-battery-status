@@ -1,4 +1,4 @@
-command: "(ioreg -r -k BatteryPercent | grep -E '\"(Product|BatteryPercent)\"' ; echo '---SEP---' ; system_profiler -json SPBluetoothDataType 2>/dev/null)"
+command: "(ioreg -r -l -k BatteryPercent | grep -E '[+]-o|\"(Product|BatteryPercent|DeviceAddress)\"' ; echo '---SEP---' ; system_profiler -json SPBluetoothDataType 2>/dev/null)"
 
 # Enable or disable this widget.
 widgetEnabled: true   # true | false
@@ -104,45 +104,68 @@ deviceBarColor: (pct) ->
   else if pct <= 40 then 'var(--status-warn, var(--level-max, rgba(255, 255, 255, 1)))'
   else 'var(--status-ok, var(--level-max, rgba(255, 255, 255, 1)))'
 
-# Parse the ioreg block — alternating Product / BatteryPercent records.
-# Catches devices that expose HID battery levels (e.g., Magic Mouse / Keyboard).
+# Normalise a Bluetooth address so ioreg's "1c-f6-4c-03-7d-b0" and
+# system_profiler's "1C:F6:4C:03:7D:B0" compare equal.
+normAddr: (a) ->
+  if a then String(a).toLowerCase().replace(/[^0-9a-f]/g, '') else null
+
+# Parse the ioreg block. Each device starts at a "+-o" node line and carries
+# Product / DeviceAddress / BatteryPercent, read per node in any order.
+# Product can be blank on recent macOS (Magic Mouse, macOS 26), so the address
+# is kept and the name is looked up from system_profiler instead.
 parseIoreg: (text) ->
   devices = []
-  currentName = null
+  cur = null
+  start = -> {name: null, address: null, percent: null}
+  flush = ->
+    devices.push cur if cur? and cur.percent?
+    cur = null
   for line in text.split('\n')
-    if (m = line.match /"Product"\s*=\s*"([^"]+)"/)
-      currentName = m[1].replace(/-/g, ' ')
-    else if (m = line.match /"BatteryPercent"\s*=\s*(\d+)/) and currentName?
-      devices.push name: currentName, percent: parseInt(m[1], 10)
-      currentName = null
+    if /\+-o/.test(line)
+      flush()
+      cur = start()
+    else if (m = line.match /"Product"\s*=\s*"([^"]+)"/)
+      cur ?= start()
+      cur.name = m[1].replace(/-/g, ' ')
+    else if (m = line.match /"DeviceAddress"\s*=\s*"([^"]+)"/)
+      cur ?= start()
+      cur.address = @normAddr(m[1])
+    else if (m = line.match /"BatteryPercent"\s*=\s*(\d+)/)
+      cur ?= start()
+      cur.percent = parseInt(m[1], 10)
+  flush()
   devices
 
-# Parse system_profiler JSON.
-# Catches devices that don't expose ioreg battery (e.g., AirPods, which report
-# Case / Left / Right separately).
+# Parse system_profiler JSON. Returns {devices, names}:
+#   devices - connected devices that report a battery (e.g. keyboard, AirPods,
+#             which report Case / Left / Right separately)
+#   names   - address -> display name for EVERY connected device, so ioreg
+#             batteries with a blank Product can be named.
 parseSystemProfiler: (jsonText) ->
-  devices = []
-  return devices unless jsonText
+  result = {devices: [], names: {}}
+  return result unless jsonText
   try
     data = JSON.parse(jsonText)
   catch e
-    return devices
+    return result
+  toPct = (v) ->
+    return null unless v?
+    n = parseInt(v, 10)
+    if isNaN(n) then null else n
   for controller in (data?.SPBluetoothDataType or [])
     for entry in (controller?.device_connected or [])
       for rawName, info of entry
-        name = rawName.replace(/-/g, ' ')
-        toPct = (v) -> parseInt(v, 10) if v?
-        # Combined single battery
-        if info.device_batteryLevelMain?
-          devices.push name: name, percent: toPct(info.device_batteryLevelMain)
-        # AirPods-style split batteries
-        if info.device_batteryLevelCase?
-          devices.push name: "#{name} (Case)", percent: toPct(info.device_batteryLevelCase)
-        if info.device_batteryLevelLeft?
-          devices.push name: "#{name} (Left)", percent: toPct(info.device_batteryLevelLeft)
-        if info.device_batteryLevelRight?
-          devices.push name: "#{name} (Right)", percent: toPct(info.device_batteryLevelRight)
-  devices
+        name    = rawName.replace(/-/g, ' ')
+        address = @normAddr(info?.device_address)
+        result.names[address] = name if address
+        add = (label, v) ->
+          p = toPct(v)
+          result.devices.push({name: label, address: address, percent: p}) if p?
+        add name, info?.device_batteryLevelMain
+        add "#{name} (Case)",  info?.device_batteryLevelCase
+        add "#{name} (Left)",  info?.device_batteryLevelLeft
+        add "#{name} (Right)", info?.device_batteryLevelRight
+  result
 
 update: (output, domEl) ->
   # Hide entirely when disabled.
@@ -152,15 +175,25 @@ update: (output, domEl) ->
   $(domEl).css('display', '')
   [ioregText, jsonText] = output.split('---SEP---')
   ioregDevices = @parseIoreg(ioregText or '')
-  spDevices    = @parseSystemProfiler((jsonText or '').trim())
+  sp           = @parseSystemProfiler((jsonText or '').trim())
 
-  # Merge, deduping by display name (ioreg wins if both report the same device).
-  seen = {}
-  devices = []
-  for d in ioregDevices.concat(spDevices)
-    unless seen[d.name]
-      seen[d.name] = true
-      devices.push d
+  # Merge. ioreg wins when both report the same device (matched by Bluetooth
+  # address). An ioreg battery with a blank Product borrows its name from
+  # system_profiler via that address. Split batteries (AirPods case/left/right)
+  # share one address, so system_profiler entries are otherwise deduped by name.
+  devices  = []
+  seenAddr = {}
+  seenName = {}
+  for d in ioregDevices
+    name = d.name or (d.address and sp.names[d.address]) or 'Bluetooth device'
+    devices.push {name: name, percent: d.percent}
+    seenAddr[d.address] = true if d.address
+    seenName[name] = true
+  for d in sp.devices
+    continue if d.address and seenAddr[d.address]
+    continue if seenName[d.name]
+    seenName[d.name] = true
+    devices.push d
 
   div = $(domEl)
 
