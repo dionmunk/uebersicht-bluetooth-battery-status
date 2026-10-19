@@ -2,3 +2,8 @@
 .DS_Store
 .DS_Store?
 __MACOSX
+
+# SF Symbol icon PNGs are generated locally on first run by lib/render-bolt.swift,
+# not shipped. Apple's SF Symbols license does not permit redistributing the
+# rendered artwork.
+bluetooth-battery-status.widget/lib/icons/
