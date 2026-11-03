@@ -71,8 +71,8 @@ style: """
     text-align: right
     font-weight: bold
 
-  // Charging bolt in front of the percentage, shown only while the device
-  // reports charging; green to match internal-battery-status. The SF Symbol
+  // Charging bolt in front of the percentage, shown only while the device is
+  // on its cable and below 100%; green to match internal-battery-status. The SF Symbol
   // bolt.fill, rendered to a PNG on first run (lib/render-bolt.swift) and used
   // as a mask so it takes the theme colour.
   .charge-bolt
@@ -139,8 +139,10 @@ esc: (s) ->
 # Parse the ioreg block: one device per "+-o" node, fields in any order.
 # Catches devices that expose HID battery levels (e.g., Magic Mouse / Keyboard).
 # "Product" can be blank (seen on macOS 26 and 27), so each device keeps its
-# address for a name lookup in system_profiler. BatteryStatusFlags reads 3 on
-# the charging cable and 0 otherwise; the 2 bit is taken as "charging".
+# address for a name lookup in system_profiler. BatteryStatusFlags reads 3
+# while the charging cable is connected and 0 otherwise. The 2 bit means
+# "on the cable", not "charging": it stays set at 100% (measured on a Magic
+# Keyboard, macOS 27.2.0), and no other field tells the two apart.
 parseIoreg: (text) ->
   devices = []
   cur = null
@@ -150,7 +152,7 @@ parseIoreg: (text) ->
   for line in text.split('\n')
     if /\+-o/.test(line)
       flush()
-      cur = {name: null, address: null, percent: null, charging: false}
+      cur = {name: null, address: null, percent: null, onCable: false}
     else if not cur?
       continue
     else if (m = line.match /"Product"\s*=\s*"([^"]+)"/)
@@ -160,7 +162,7 @@ parseIoreg: (text) ->
     else if (m = line.match /"BatteryPercent"\s*=\s*(\d+)/)
       cur.percent = parseInt(m[1], 10)
     else if (m = line.match /"BatteryStatusFlags"\s*=\s*(\d+)/)
-      cur.charging = (parseInt(m[1], 10) & 2) isnt 0
+      cur.onCable = (parseInt(m[1], 10) & 2) isnt 0
   flush()
   devices
 
@@ -229,7 +231,10 @@ update: (output, domEl) ->
   $devices = div.find('.devices').empty()
   for d in devices
     color = @deviceBarColor(d.percent)
-    bolt  = if d.charging then '<span class="charge-bolt"></span>' else ''
+    # On the cable and not yet full counts as charging. A full device on the
+    # cable shows no bolt, matching internal-battery-status once it's charged.
+    charging = d.onCable and d.percent < 100
+    bolt  = if charging then '<span class="charge-bolt"></span>' else ''
     $devices.append """
       <div class="device-row">
         <div class="device-header">
